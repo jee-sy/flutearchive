@@ -1,7 +1,7 @@
 ---
 date: 2026-12-05
-title: E.Ruem Orchestra: The 9th Concert
-venue: Seongnam Arts Center, Korea
+title: "E.Ruem Orchestra: The 9th Concert"
+venue: "Seongnam Arts Center, Korea"
 ---
 
 <p>
