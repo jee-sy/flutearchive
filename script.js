@@ -2,17 +2,21 @@ async function loadText(url) {
   const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(`Could not load ${url}`);
+    throw new Error(`Could not load ${url} — HTTP ${response.status}`);
   }
 
   return response.text();
 }
 
-function parseMarkdownFile(raw) {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+function parseMarkdownFile(raw, url) {
+  const normalized = raw.replace(/^\uFEFF/, "");
+  const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
 
   if (!match) {
-    return { data: {}, content: raw };
+    throw new Error(
+      `Missing or malformed front matter in ${url}. ` +
+      `The file must begin with --- on its first line.`
+    );
   }
 
   const data = {};
@@ -60,70 +64,93 @@ function formatDate(isoDate) {
 }
 
 async function loadPosts(indexFile, type) {
-  const paths = await loadText(indexFile).then((text) => JSON.parse(text));
+  const paths = JSON.parse(await loadText(indexFile));
   const posts = [];
 
   for (const path of paths) {
-    const file = await loadText(path);
-    const post = parseMarkdownFile(file);
+    const raw = await loadText(path);
+    const post = parseMarkdownFile(raw, path);
 
-    if (post.data.date) {
-      post.data.dateFormatted = formatDate(post.data.date);
-      post.timestamp = new Date(post.data.date + "T00:00:00").getTime();
+    if (!post.data.date) {
+      throw new Error(`Missing date in front matter: ${path}`);
     }
 
+    post.timestamp = new Date(post.data.date + "T00:00:00").getTime();
+
+    if (Number.isNaN(post.timestamp)) {
+      throw new Error(`Invalid date "${post.data.date}" in ${path}`);
+    }
+
+    post.data.dateFormatted = formatDate(post.data.date);
     posts.push(post);
   }
 
-  if (type === "event") {
-    posts.sort((a, b) => b.timestamp - a.timestamp);
-  } else {
-    posts.sort((a, b) => b.timestamp - a.timestamp);
-  }
-
+  posts.sort((a, b) => b.timestamp - a.timestamp);
   return posts;
 }
 
-async function init() {
-  const aboutEl = document.getElementById("about-content");
-
-  if (aboutEl) {
-    const about = parseMarkdownFile(await loadText("about.md"));
-    aboutEl.innerHTML = about.content;
-  }
+function showError(message) {
+  const errorHtml = `<p class="error"><strong>Error:</strong> ${message}</p>`;
 
   const upcomingEl = document.getElementById("upcoming-events");
   const pastEl = document.getElementById("past-events");
-
-  if (upcomingEl && pastEl) {
-    const events = await loadPosts("events.json", "event");
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const upcoming = events
-      .filter((event) => event.timestamp >= today.getTime())
-      .reverse();
-
-    const past = events.filter(
-      (event) => event.timestamp < today.getTime()
-    );
-
-    upcomingEl.innerHTML = upcoming.length
-      ? upcoming.map(renderEvent).join("")
-      : `<p class="empty">No upcoming events.</p>`;
-
-    pastEl.innerHTML = past.length
-      ? past.map(renderEvent).join("")
-      : `<p class="empty">No past events yet.</p>`;
-  }
-
   const notesEl = document.getElementById("practice-notes");
 
-  if (notesEl) {
-    const notes = await loadPosts("notes.json", "note");
-    notesEl.innerHTML = notes.length
-      ? notes.map(renderPracticeNote).join("")
-      : `<p class="empty">No practice notes yet.</p>`;
+  if (upcomingEl) upcomingEl.innerHTML = errorHtml;
+  if (pastEl) pastEl.innerHTML = "";
+  if (notesEl) notesEl.innerHTML = errorHtml;
+}
+
+async function init() {
+  try {
+    const aboutEl = document.getElementById("about-content");
+
+    if (aboutEl) {
+      const about = parseMarkdownFile(
+        await loadText("about.md"),
+        "about.md"
+      );
+      aboutEl.innerHTML = about.content;
+    }
+
+    const upcomingEl = document.getElementById("upcoming-events");
+    const pastEl = document.getElementById("past-events");
+
+    if (upcomingEl && pastEl) {
+      const events = await loadPosts("events.json", "event");
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const upcoming = events
+        .filter((event) => event.timestamp >= today.getTime())
+        .reverse();
+
+      const past = events.filter(
+        (event) => event.timestamp < today.getTime()
+      );
+
+      upcomingEl.innerHTML = upcoming.length
+        ? upcoming.map(renderEvent).join("")
+        : `<p class="empty">No upcoming events.</p>`;
+
+      pastEl.innerHTML = past.length
+        ? past.map(renderEvent).join("")
+        : `<p class="empty">No past events yet.</p>`;
+    }
+
+    const notesEl = document.getElementById("practice-notes");
+
+    if (notesEl) {
+      const notes = await loadPosts("notes.json", "note");
+
+      notesEl.innerHTML = notes.length
+        ? notes.map(renderPracticeNote).join("")
+        : `<p class="empty">No practice notes yet.</p>`;
+    }
+  } catch (error) {
+    console.error(error);
+    showError(error.message);
   }
 }
 
